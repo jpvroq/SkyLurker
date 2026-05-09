@@ -3,7 +3,9 @@ from typing import Dict, List
 import xml.etree.ElementTree as ET
 import requests
 import urllib.robotparser
+import logging
 
+logger = logging.getLogger(__name__)
 
 def _get_robots(url: str) -> urllib.robotparser.RobotFileParser:
     """
@@ -19,11 +21,11 @@ def _get_robots(url: str) -> urllib.robotparser.RobotFileParser:
     try:
         robotparser.set_url(url_base)
         robotparser.read()
+        logger.info("robots.txt found.")
         return robotparser
     except Exception as e:
-        # TODO: logger
-        # TODO: throw Exception
-        raise ValueError('Something happened.')
+        logger.error(f"Cannot read robots.txt from {url_base}: {e}.")
+        raise e
 
 def _get_sitemaps(site: str) -> List[str]:
     """
@@ -37,7 +39,7 @@ def _get_sitemaps(site: str) -> List[str]:
         for loc in root.findall('.//{*}loc'):
             url = loc.text.strip() if loc.text else ""
             if url:
-                if url.endswith('.xml') and url != site:
+                if url.endswith('.xml') and (url != site or url not in sites):
                     sites.extend(_get_sitemaps(url))
                 else:
                     sites.append(url)
@@ -54,19 +56,22 @@ class NetCreep(ABC):
         # Key validation
         for key in ["base_url", "type"]:
             if key not in self.config:
-                raise KeyError(f"Missing parameter in config file: {key}")
+                logger.error("JSON Schema error.")
+                raise KeyError(f"Missing parameter in config file: {key}.")
         
         self.type = self.config.get("type")
         self.base_url = self.config.get("base_url")
         if not self.base_url: return
         self.rp = _get_robots(self.base_url)
         sitemap = self.rp.site_maps()
+        self.sitemaps = []
         if sitemap:
             for site in sitemap:
                 if site.endswith('.xml'):
-                    self.sitemaps = _get_sitemaps(site)
+                    self.sitemaps.extend(_get_sitemaps(site))
                 else:
-                    pass
+                    self.sitemaps.append(site)
+        pass
     
 
     @abstractmethod
