@@ -67,11 +67,11 @@ class DynamicLurker(NetLurker):
                         return td.innerText.trim();
                     }});
 
-                    // Només processem si la fila té algun contingut
+                    // Only process if its not null
                     if (rowData.some(cell => cell !== "")) {{
                         // Creem una "clau" única unint el contingut de les cel·les
                         const rowKey = JSON.stringify(rowData);
-                        
+                        // Do not process duplicated rows
                         if (!seen.has(rowKey)) {{
                             seen.add(rowKey);
                             uniqueResults.push(rowData);
