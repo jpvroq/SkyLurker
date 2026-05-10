@@ -1,20 +1,21 @@
 from typing import Dict, Union, Any
-from .static import StaticCreep
-from .base import TestCreep
+from .static import StaticLurker
+from .dynamic import DynamicLurker
+from .base import TestLurker
 from pathlib import Path
 import json
 class CreepFactory:
     @classmethod
-    def create(cls, config_input: Union[str, Dict[str, str]]):
+    def create(cls, config_input: Union[str, Any]):
         if isinstance(config_input, str):
             config = _load_from_file(config_input)
         else:
             config = config_input
         type = config.get("type").lower()
 
-        if type == "static": return StaticCreep(config)
-        if type == "dynamic": return DynamicCreep(config)
-        if type == "API": return APICreep(config)
+        if type == "static": return StaticLurker(config)
+        if type == "dynamic": return DynamicLurker(config)
+        if type == "API": return APILurker(config)
         if type == "test": return TestCreep(config)
         # TODO: exception
     
