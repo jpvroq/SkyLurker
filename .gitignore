@@ -1,2 +1,7 @@
 venv
 .venv
+netcreep/__pycache__/base.cpython-314.pyc
+netcreep/__pycache__/__init__.cpython-314.pyc
+netcreep/__pycache__/dynamic.cpython-314.pyc
+netcreep/__pycache__/static.cpython-314.pyc
+__pycache__/main.cpython-314.pyc
