@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import Dict, List, Union
 import xml.etree.ElementTree as ET
 import requests
 import urllib.robotparser
@@ -7,25 +7,31 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def _get_robots(url: str) -> urllib.robotparser.RobotFileParser:
+def _get_robots(url: str) -> Union[urllib.robotparser.RobotFileParser, None]:
     """
     Retrieves the robots.txt file.
     """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     url_base = url
     if not url_base: raise ValueError('No base URL.')
     if not url_base.endswith('/'):
         url_base += '/'
     url_base += "robots.txt"
     # Get robots.txt
-    robotparser = urllib.robotparser.RobotFileParser()
-    try:
-        robotparser.set_url(url_base)
-        robotparser.read()
-        logger.info("robots.txt found.")
-        return robotparser
-    except Exception as e:
-        logger.error(f"Cannot read robots.txt from {url_base}: {e}.")
-        raise e
+    response = requests.get(url_base, timeout=10, headers=headers)
+    if response.status_code == 200:
+        try:
+            robotparser = urllib.robotparser.RobotFileParser()
+            robotparser.parse(response.text.splitlines())
+            logger.info("robots.txt found.")
+            return robotparser
+        except Exception as e:
+            logger.error(f"Cannot read robots.txt from {url_base}: {e}.")
+            raise e
+    else:
+        return None
 
 def _get_sitemaps(site: str) -> List[str]:
     """
@@ -49,29 +55,28 @@ def _get_sitemaps(site: str) -> List[str]:
     return sites
 
 
-class NetCreep(ABC):
+class NetLurker(ABC):
 
     def __init__(self, config: Dict[str, str]):
         self.config = config
         # Key validation
-        for key in ["base_url", "type"]:
-            if key not in self.config:
-                logger.error("JSON Schema error.")
-                raise KeyError(f"Missing parameter in config file: {key}.")
+        if "base_url" not in self.config:
+            logger.error("JSON Schema error.")
+            raise KeyError(f"Missing parameter in config file: {key}.")
         
         self.type = self.config.get("type")
         self.base_url = self.config.get("base_url")
         if not self.base_url: return
         self.rp = _get_robots(self.base_url)
-        sitemap = self.rp.site_maps()
-        self.sitemaps = []
-        if sitemap:
-            for site in sitemap:
-                if site.endswith('.xml'):
-                    self.sitemaps.extend(_get_sitemaps(site))
-                else:
-                    self.sitemaps.append(site)
-        pass
+        if self.rp:
+            sitemap = self.rp.site_maps()
+            self.sitemaps = []
+            if sitemap:
+                for site in sitemap:
+                    if site.endswith('.xml'):
+                        self.sitemaps.extend(_get_sitemaps(site))
+                    else:
+                        self.sitemaps.append(site)
     
 
     @abstractmethod
@@ -79,24 +84,24 @@ class NetCreep(ABC):
         pass
 
     @abstractmethod
-    def creep(self):
+    def lurk(self):
         pass
 
     @abstractmethod
     def close(self):
         pass
 
-class TestCreep(NetCreep):
+class TestLurker(NetLurker):
     def __init__(self, config_pas):
         if config_pas is None:
             config_pas = {
                 "type": "test",
-                "base_url": "https://skyosint.io"
+                "base_url": "https://www.flightradar24.com/"
             }
         super().__init__(config_pas)
 
     def connect(self): pass
-    def creep(self): pass
+    def lurk(self): pass
     def close(self): pass
 
 def test_robots_info(crawler: TestCreep):
@@ -138,4 +143,4 @@ def test_robots_info(crawler: TestCreep):
     
 
 if __name__ == "__main__":
-    test_robots_info(TestCreep(None))
+    test_robots_info(TestLurker(None))
