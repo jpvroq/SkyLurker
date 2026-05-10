@@ -1,0 +1,9 @@
+{
+    "type": "static",
+    "scrapers": [{
+        "base_url": "",
+        "items": [{
+            "url_pattern": ""
+        }]
+    }]
+}
