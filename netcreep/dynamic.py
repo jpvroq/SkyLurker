@@ -6,12 +6,12 @@ from playwright.sync_api import sync_playwright
 logger = logging.getLogger(__name__)
 
 OPERATORS = {
-    "==", operator.eq,
-    "!=", operator.ne,
-    "<", operator.lt,
-    ">", operator.gt,
-    "<=", operator.le,
-    ">=", operator.ge
+    "==": operator.eq,
+    "!=": operator.ne,
+    "<": operator.lt,
+    ">": operator.gt,
+    "<=": operator.le,
+    ">=": operator.ge
 }
 
 class DynamicLurker(NetLurker):
@@ -36,7 +36,7 @@ class DynamicLurker(NetLurker):
                 result = self._table_lurker(job)
             elif ty == "item":
                 self._item_lurker(job)
-            for action in job.get("pre_actions", []):
+            for action in job.get("post_actions", []):
                 self._actuate(action, result=result)
             if ty == "table":
                 return [dict(zip(result[1], row)) for row in result[2]]
