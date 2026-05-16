@@ -1,4 +1,5 @@
 import netcreep
+import json
 
 if __name__ == "__main__":
     config = {
@@ -28,5 +29,7 @@ if __name__ == "__main__":
     }
     crawler = netcreep.CreepFactory.create(config)
     crawler.connect()
-    crawler.lurk()
+    result = crawler.lurk()
     crawler.close()
+    json_res = json.dump(result, indent=4, ensure_ascii=False)
+    print(json_res)
