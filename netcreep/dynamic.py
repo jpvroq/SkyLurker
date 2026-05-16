@@ -1,9 +1,18 @@
 from .base import NetLurker
-import logging
+import logging, operator, json
 from typing import Dict, List, Tuple
 from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
+
+OPERATORS = {
+    "==", operator.eq,
+    "!=", operator.ne,
+    "<", operator.lt,
+    ">", operator.gt,
+    "<=", operator.le,
+    ">=", operator.ge
+}
 
 class DynamicLurker(NetLurker):
     def __init__(self, config: Dict[str, str]):
@@ -23,9 +32,11 @@ class DynamicLurker(NetLurker):
             for action in job.get("pre_actions", []):
                 self._actuate(action)
             if job.get("type") == "table":
-                headers, results = self._table_lurker(job)
+                result = self._table_lurker(job)
             elif self.config.get("type") == "item":
                 self._item_lurker(job)
+            for action in job.get("pre_actions", []):
+                self._actuate(action, result=result)
     
     def close(self):
         logger.info("Stopping playwright browser.")
@@ -82,27 +93,13 @@ class DynamicLurker(NetLurker):
                 return uniqueResults;
             }}
         """)
-        # Bad. Really bad. Do not use. It will tank the performance
-        """rows = self.page.query_selector_all(f"#{table_id} tbody tr")
-        for row in rows:
-            cells = row.query_selector_all("td")
-            row = []
-            if cells:
-                for cell in cells:
-                    img = cell.query_selector("img")
-                    if img:
-                        data = img.get_attribute("title") or img.get_attribute("alt")
-                    else:
-                        data = cell.inner_text()
-                    row.append(data.strip() if data else "")
-                if any(row):
-                    results.append(row)"""
-        return headers, results
+        return ["table", headers, results]
     
-    def _actuate(self, action: Dict[str, Any]):
+    def _actuate(self, action: Dict[str, Any], result: List[Any]=None):
         act = action.get("action")
         val = action.get("value")
         chk = action.get("check")
+        sym = action.get("sym", "")
         try:
             if act == "click":
                 logger.info(f"Click on {val}.")
@@ -132,6 +129,43 @@ class DynamicLurker(NetLurker):
                     # Scrolling
                     chk = float(chk)
                     self.page.mouse.wheel(0, chk)
-
+            elif act == "filter":
+                logger.info(f"Filtering with {val} {sym} {chk}.")
+                self._filter(val, chk, sym, result)
         except Exception as e:
             logger.error(f"Could not actuate {act}, value {val}: {e}")
+    
+    def _filter(self, name, value, sym, result):
+        func = OPERATORS.get(sym)
+        if not func:
+            logger.error(f"No existing operator {sym}")
+            return
+        # Validate outer listchar
+        if not isinstance(result, list):
+            logger.error("Cannot filter. Wrong parametertype for result list.")
+            return
+
+        if result[0] == "table":
+            # Validate table format
+            if len(result) != 3:
+                logger.error("Cannot filter. Wrong parameter number in result list.")
+                return
+
+            # Validate header list
+            if not isinstance(result[1], list) or not all(
+                isinstance(c, str) for c in result[1]
+            ):
+                logger.error("Column headers must be a list of strings.")
+                return
+
+            # Validate result table
+            if not isinstance(result[2], list) or not all(
+                isinstance(fila, list) for fila in result[2]
+            ):
+                logger.error("Rows must be a list of lists.")
+                return
+            if name not in result[1]:
+                logger.warning(f"No column named {name}.")
+                return
+            index = result[1].index(name)
+            result[2][:] = [row for row in result[2] if func(row[index], value)]
