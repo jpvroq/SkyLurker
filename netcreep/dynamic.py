@@ -1,5 +1,5 @@
 from .base import NetLurker
-import logging, operator, json
+import logging, operator
 from typing import Dict, List, Tuple
 from playwright.sync_api import sync_playwright
 
@@ -29,14 +29,17 @@ class DynamicLurker(NetLurker):
     
     def lurk(self):
         for job in self.jobs:
+            ty = job.get("type")
             for action in job.get("pre_actions", []):
                 self._actuate(action)
-            if job.get("type") == "table":
+            if ty == "table":
                 result = self._table_lurker(job)
-            elif self.config.get("type") == "item":
+            elif ty == "item":
                 self._item_lurker(job)
             for action in job.get("pre_actions", []):
                 self._actuate(action, result=result)
+            if ty == "table":
+                return [dict(zip(result[1], row)) for row in result[2]]
     
     def close(self):
         logger.info("Stopping playwright browser.")
@@ -164,8 +167,8 @@ class DynamicLurker(NetLurker):
             ):
                 logger.error("Rows must be a list of lists.")
                 return
-            if name not in result[1]:
+            if name.lower() not in result[1]:
                 logger.warning(f"No column named {name}.")
                 return
-            index = result[1].index(name)
+            index = result[1].index(name.lower())
             result[2][:] = [row for row in result[2] if func(row[index], value)]
