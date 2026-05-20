@@ -33,7 +33,7 @@ class DynamicLurker(NetLurker):
             for action in job.get("pre_actions", []):
                 self._actuate(action)
             if ty == "table":
-                result = self._table_lurker(job)
+                result = self._table_lurker_hybrid(job)
             elif ty == "item":
                 self._item_lurker(job)
             for action in job.get("post_actions", []):
@@ -86,6 +86,67 @@ class DynamicLurker(NetLurker):
                         // Creem una "clau" única unint el contingut de les cel·les
                         const rowKey = JSON.stringify(rowData);
                         // Do not process duplicated rows
+                        if (!seen.has(rowKey)) {{
+                            seen.add(rowKey);
+                            uniqueResults.push(rowData);
+                        }}
+                    }}
+                }});
+
+                return uniqueResults;
+            }}
+        """)
+        return ["table", headers, results]
+    
+    def _table_lurker_hybrid(self, job: Dict[str, str]) -> Tuple[List[str], List[str]]:
+        table_id = job.get("name")
+        logging.info(f"Lurking in table {table_id} (Hybrid Selector).")
+        self.page.wait_for_selector(f"#{table_id}")
+
+        # 1. Headers híbrids: Suporta 'thead td/th' tra Grid/ARIA
+        headers = []
+        header_selectors = [
+            f"#{table_id} thead td", 
+            f"#{table_id} thead th", 
+            f"#{table_id} [role='columnheader']",
+            f"#{table_id} .grid-header-cell"
+        ]
+        header_elements = self.page.query_selector_all(", ".join(header_selectors))
+    
+        if header_elements:
+            headers = [h.inner_text().strip().lower() or h.get_attribute("id").lower() or ""
+                        for h in header_elements]
+    
+        # 2. Files i cel·les híbrides amb JavaScript
+        results = self.page.evaluate(f"""
+            () => {{
+                // Search row both in html tr and CSS Grid roles
+                const rowSelectors = '#{table_id} tbody tr, #{table_id} [role="row"], #{table_id} .grid-row';
+                const rows = Array.from(document.querySelectorAll(rowSelectors));
+                const seen = new Set();
+                const uniqueResults = [];
+
+                rows.forEach(tr => {{
+                    // If header, continue
+                    if (tr.tagName === 'THEAD' || tr.querySelector('th') || tr.querySelector('[role="columnheader"]') || tr.classList.contains('grid-header')) {{
+                        return;
+                    }}
+
+                    // Search cells
+                    const cellSelectors = 'td, [role="cell"], [role="gridcell"], .grid-cell';
+                    const cells = Array.from(tr.querySelectorAll(cellSelectors));
+                
+                    const rowData = cells.map(td => {{
+                        const img = td.querySelector('img');
+                        if (img) {{
+                            return img.getAttribute('title') || img.getAttribute('alt') || "";
+                        }}
+                        return td.innerText.trim();
+                    }});
+
+                    // Check empty and duplicated
+                    if (rowData.some(cell => cell !== "")) {{
+                        const rowKey = JSON.stringify(rowData);
                         if (!seen.has(rowKey)) {{
                             seen.add(rowKey);
                             uniqueResults.push(rowData);
