@@ -1,11 +1,72 @@
-# ADS-B Exchange API Example
+from netcreep.base import NetLurker
+from typing import Union, Dict, Any, List
+import logging
 import requests
 
-url = "https://www.adsbexchange.com/api/data/aircraft/A27D05"
+logger = logging.Logger(__name__)
+
 headers = {
-    "Content-Type": "application/json"
+    "User-Agent": "SkyLurker/0.1"
 }
 
-response = requests.get(url)
-data = response.text.splitlines()
-print(data)
+def _delete_dict_node(res: Union[Dict[str, Any], ], nodes: str) -> None:
+    keys = nodes.split(".")
+    if len(keys) == 1:
+        res.pop(keys[0])
+    elif keys[0] in res and isinstance(res[keys[0]], dict):
+        _delete_dict_node(res[keys[0]], ".".join(keys[1:]))
+
+
+class APILurker(NetLurker):
+    def __init__(self, config: Dict[str, str]):
+        super().__init__(config)
+        self.jobs = config.get("jobs", [])
+    
+    def connect(self):
+        pass
+
+    def lurk(self):
+        akey = self.config.get("access_key", None)
+        self.results = []
+        try:
+            for endpoint in self.config.get("endpoints", []):
+                api = endpoint.get("api", None)
+                if not api:
+                    logger.error("No endpoint defined.")
+                    raise KeyError("Endpoints must contain an API endpoint.")
+                url = self.base_url
+                if not url.endswith("/"):
+                    url += "/"
+                url += api
+                parameters = {}
+                if akey:
+                    parameters["access_key"] = akey
+                for parameter in endpoint.get("parameters", []):
+                    param, val = parameter.get("parameter", None), parameter.get("value", None)
+                    if param and val:
+                        parameters[param] = val
+                logger.info(f"Sending API request to {url}")
+                resp = requests.get(url, headers=headers, params=parameters)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    for action in self.config.get("post_actions", []):
+                        self._actuate(action, result)
+                        self.results.append(result)
+                else:
+                    logger.error(f"API error. Status code: {resp.status_code}.")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Critical error during request: {e}")
+        except Exception as e2:
+            logger.error(f"Unexpected exception: {e2}")
+        
+        return self.results
+    
+    def close(self):
+        pass
+    
+    def _actuate(self, action: Dict[str, Any], result: Any):
+        act = action.get("action", None)
+        val = action.get("value", None)
+        if act == "remove":
+            _delete_dict_node(result, val)
+
