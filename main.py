@@ -1,43 +1,28 @@
+from pathlib import Path
 import netcreep
+import logging
 import json
+import os
+
+logger = logging.Logger(__name__)
 
 if __name__ == "__main__":
-    config = {
-        "base_url": "https://adsb.lol/",
-        "type": "dynamic",
-            "jobs": [{
-                "type": "table",
-                "url_pattern": "",
-                "name": "planesTable",
-                "pre_actions": [
-                    {
-                        "action": "click_if_not_checked",
-                        "value": "#allTableLines_cb",
-                        "check": "settingsCheckboxChecked"
-                    },
-                    {
-                        "action": "click",
-                        "value": ".ol-zoom-out",
-                        "check": 10
-                    },
-                    {
-                        "action": "wait",
-                        "value": 10000
-                    }
-                ],
-                "post_actions": [
-                    {
-                        "action": "filter",
-                        "value": "country",
-                        "check": "Brazil",
-                        "sym": "=="
-                    }
-                ]
-            }]
-    }
-    crawler = netcreep.CreepFactory.create(config)
-    crawler.connect()
-    result = crawler.lurk()
-    crawler.close()
-    json_res = json.dumps(result, indent=4, ensure_ascii=False)
-    print(json_res)
+    path = Path("./configs")
+    for file in path.glob("*.json"):
+        if file.name.startswith("exclude_"):
+            logger.info(f"Excluding file {file.name}")
+            continue
+        logger.info(f"Configuration {file.name}.")
+        try:
+            with open(file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                try:
+                    lurker = netcreep.LurkerFactory.create(data)
+                    lurker.connect()
+                    data = lurker.lurk()
+                    lurker.close()
+                except Exception as e:
+                    logger.error(f"Lurker error: {e}")
+                print(data)
+        except json.JSONDecodeError as e:
+            logger.error(f"Cannot decode JSON file {file.name}. {e}")
