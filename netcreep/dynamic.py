@@ -145,13 +145,13 @@ class DynamicLurker(NetLurker):
                     }});
 
                     // Check empty and duplicated
-                    if (rowData.some(cell => cell !== "")) {{
+                    //if (rowData.some(cell => cell !== "")) {{
                         const rowKey = JSON.stringify(rowData);
                         if (!seen.has(rowKey)) {{
                             seen.add(rowKey);
                             uniqueResults.push(rowData);
                         }}
-                    }}
+                    //}}
                 }});
 
                 return uniqueResults;
