@@ -1,17 +1,23 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "str",
+    "type": "string",
     "pages": [{
-        "base_url": "str",
-        "type": "str",
+        "base_url": "string",
+        "type": "string",
         "jobs": [{
-            "type": "str",
-            "url_pattern": "str",
-            "name": "str",
+            "type": "string",
+            "url_pattern": "string",
+            "name": "string",
             "pre_actions": [{
-                "action": "str",
-                "value": "str",
-                "check": "str"
+                "action": "string",
+                "value": "string",
+                "check": "string"
+            }],
+            "post_actions": [{
+                "action": "string",
+                "value": "string",
+                "chk": "string",
+                "sym": "string"
             }]
         }]
     }]
