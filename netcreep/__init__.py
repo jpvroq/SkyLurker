@@ -1,10 +1,11 @@
 from typing import Dict, Union, Any
 from .static import StaticLurker
 from .dynamic import DynamicLurker
+from .api import APILurker
 from .base import TestLurker
 from pathlib import Path
 import json
-class CreepFactory:
+class LurkerFactory:
     @classmethod
     def create(cls, config_input: Union[str, Any]):
         if isinstance(config_input, str):
@@ -15,7 +16,7 @@ class CreepFactory:
 
         if type == "static": return StaticLurker(config)
         if type == "dynamic": return DynamicLurker(config)
-        if type == "API": return APILurker(config)
+        if type == "api": return APILurker(config)
         if type == "test": return TestCreep(config)
         # TODO: exception
     
