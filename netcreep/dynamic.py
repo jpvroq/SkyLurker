@@ -2,7 +2,7 @@ from .base import NetLurker, RestrictedError
 import logging, operator
 from typing import Dict, List, Tuple
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync
+from playwright_stealth import stealth
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class DynamicLurker(NetLurker):
                 locale="es-ES",
                 timezone_id="Europe/Madrid"
             )
-            stealth_sync(self.page)
+            stealth(self.page)
             self.page.goto(self.base_url)
             logger.info(f"Connected to page {self.base_url}")
         except RestrictedError as re:
@@ -72,11 +72,14 @@ class DynamicLurker(NetLurker):
             if ty == "table":
                 result = self._table_lurker_hybrid(job)
             elif ty == "item":
-                self._item_lurker(job)
+                result = self._item_lurker(job)
+            
             for action in job.get("post_actions", []):
                 self._actuate(action, result=result)
-            if ty == "table":
+            if ty == "table" and result:
                 return [dict(zip(result[1], row)) for row in result[2]]
+            if ty == "item" and result:
+                return result[2]
     
     def close(self):
         logger.info("Stopping playwright browser.")
@@ -87,7 +90,49 @@ class DynamicLurker(NetLurker):
     
 
     def _item_lurker(self, job: Dict[str, str]):
-        raise NotImplementedError("Item lurker is not implemented")
+        """
+        Gets a single text form the webpage.
+        """
+        item_name = job.get("name", None)
+        logger.info(f"Searching for {item_name}.")
+
+        data = {}
+        fields = job.get("fields", [])
+
+        if not fields:
+            logger.warning(f"No fields defined for item job: {item_name}")
+            return data
+        
+        for field in fields:
+            field_name = field.get("field_name", None)
+            if not field_name:
+                logger.warning(f"Fields must have a name: {item_name}")
+                continue
+            selector = field.get("selector", None)
+            if not selector:
+                logger.warning(f"Fields must have a selector: {item_name}")
+                continue
+            try:
+                self.page.wait_for_selector(selector, timeout=5000)
+                element = self.page.locator(selector).first
+
+                if element.count() > 0:
+                    text = element.inner_text().strip()
+                    type = field.get("type", None)
+                    aux = None
+                    if type:
+                        try:
+                            if type == 'int':
+                                aux = int(text)
+                            if type == 'float':
+                                aux = float(text)
+                            text = aux
+                        except:
+                            logger.warning(f"Cannot cast {text} to {type} for {field_name}.")
+                    data[field_name] = text
+            except Exception as e:
+                logger.warning(f"Error extracting field '{field_name} using selector ¡{selector}: {e}")
+            return {"item", item_name, data}
     
     def _table_lurker(self, job: Dict[str, str]) -> Tuple[List[str], List[str]]:
         table_id = job.get("name")
