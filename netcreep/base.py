@@ -62,21 +62,25 @@ class NetLurker(ABC):
         # Key validation
         if "base_url" not in self.config:
             logger.error("JSON Schema error.")
-            raise KeyError(f"Missing parameter in config file: {key}.")
+            raise KeyError(f"Missing parameter in config file: base_url.")
         
         self.type = self.config.get("type")
         self.base_url = self.config.get("base_url")
-        if not self.base_url: return
-        self.rp = _get_robots(self.base_url)
-        if self.rp:
-            sitemap = self.rp.site_maps()
-            self.sitemaps = []
-            if sitemap:
-                for site in sitemap:
-                    if site.endswith('.xml'):
-                        self.sitemaps.extend(_get_sitemaps(site))
-                    else:
-                        self.sitemaps.append(site)
+        self.rp = None
+        self.sitemaps = []
+        try:
+            self.rp = _get_robots(self.base_url)
+            if self.rp:
+                sitemap = self.rp.site_maps()
+                self.sitemaps = []
+                if sitemap:
+                    for site in sitemap:
+                        if site.endswith('.xml'):
+                            self.sitemaps.extend(_get_sitemaps(site))
+                        else:
+                            self.sitemaps.append(site)
+        except Exception as e:
+            logger.error("Could not parse robots.txt or sitemaps for {self.base_url}.")
     
 
     @abstractmethod
@@ -104,7 +108,7 @@ class TestLurker(NetLurker):
     def lurk(self): pass
     def close(self): pass
 
-def test_robots_info(crawler: TestCreep):
+def test_robots_info(crawler: TestLurker):
     rp = crawler.rp
     if not rp:
         print(f"[-] There is no robots.txt file for the URL {crawler.base_url}")
