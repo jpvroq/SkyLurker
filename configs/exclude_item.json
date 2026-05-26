@@ -1,0 +1,10 @@
+{
+  "type": "item",
+  "name": "Satélite",
+  "fields": [
+    { "field_name": "nombre_satelite", "selector": "h1.satellite-title", "type": "int" },
+    { "field_name": "id_norad", "selector": "span.norad-id" },
+    { "field_name": "pais_origen", "selector": "div.country-data >> text" },
+    { "field_name": "estado_orbital", "selector": ".status-badge" }
+  ]
+}
