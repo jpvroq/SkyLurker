@@ -1,4 +1,4 @@
-from .base import NetLurker
+from .base import NetLurker, RestrictedError
 import logging, operator
 from typing import Dict, List, Tuple
 from playwright.sync_api import sync_playwright
@@ -41,23 +41,30 @@ class DynamicLurker(NetLurker):
         self.jobs = config.get("jobs", [])
 
     def connect(self):
-        logger.info(f"Connecting to {self.base_url} via Playwright")
-        self.pw = sync_playwright().start()
-        self.browser = self.pw.chromium.launch(headless=True)
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        self.can_lurk = True
+        try:
+            self.verify_and_wait(self.base_url)
+            logger.info(f"Connecting to {self.base_url} via Playwright")
+            self.pw = sync_playwright().start()
+            self.browser = self.pw.chromium.launch(headless=True)
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        self.page = self.browser.new_page(
-            user_agent=user_agent,
-            viewport={"width": 1920, "height": 1080},
-            locale="es-ES",
-            timezone_id="Europe/Madrid"
-        )
-        stealth_sync(self.page)
-        self.page.goto(self.base_url)
-        logger.info(f"Connected to page {self.base_url}")
+            self.page = self.browser.new_page(
+                user_agent=self.user_agent,
+                viewport={"width": 1920, "height": 1080},
+                locale="es-ES",
+                timezone_id="Europe/Madrid"
+            )
+            stealth_sync(self.page)
+            self.page.goto(self.base_url)
+            logger.info(f"Connected to page {self.base_url}")
+        except RestrictedError as re:
+            self.can_lurk = False
     
     def lurk(self):
         result = None
+        if not self.can_lurk:
+            return None
         for job in self.jobs:
             ty = job.get("type")
             for action in job.get("pre_actions", []):
