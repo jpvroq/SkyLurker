@@ -3,6 +3,7 @@ from typing import Union, Dict, Any, List
 from dotenv import load_dotenv
 import logging
 import requests
+import os
 
 logger = logging.getLogger(__name__)
 # Load api keys and env variables
@@ -25,7 +26,6 @@ class APILurker(NetLurker):
         pass
 
     def lurk(self):
-        akey = self.config.get("access_key", None)
         self.results = []
         api_headers = {
             "User-Agent": self.user_agent
@@ -63,12 +63,14 @@ class APILurker(NetLurker):
                     param, val = parameter.get("parameter", None), parameter.get("value", None)
                     if param and val:
                         parameters[param] = val
-                
+                logger.info(f"Loaded {len(parameters)} parameters for API {api}")
                 logger.info(f"Sending API request to {url}")
                 resp = requests.get(url, headers=api_headers, params=parameters)
                 if resp.status_code == 200:
+                    logger.info(f"API {api} request succesful.")
                     result = resp.json()
                     for action in self.config.get("post_actions", []):
+                        logger.info(f"Performing action '{action.get("action", "ERROR")}' on results.")
                         self._actuate(action, result)
                         self.results.append(result)
                 else:
