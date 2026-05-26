@@ -2,6 +2,7 @@ from .base import NetLurker
 import logging, operator
 from typing import Dict, List, Tuple
 from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_sync
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,26 @@ OPERATORS = {
     ">=": operator.ge
 }
 
+def _typecast(val: Any) -> Any:
+    """
+    Tries to cast a string to an int or float.
+    """
+    if not isinstance(val, str):
+        return val
+    
+    clean = val.strip()
+    if not clean:
+        return ""
+    try:
+        return int(clean)
+    except ValueError:
+        pass
+    try:
+        return float(clean)
+    except ValueError:
+        pass
+    return val
+
 class DynamicLurker(NetLurker):
     def __init__(self, config: Dict[str, str]):
         super().__init__(config)
@@ -23,11 +44,20 @@ class DynamicLurker(NetLurker):
         logger.info(f"Connecting to {self.base_url} via Playwright")
         self.pw = sync_playwright().start()
         self.browser = self.pw.chromium.launch(headless=True)
-        self.page = self.browser.new_page()
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        self.page = self.browser.new_page(
+            user_agent=user_agent,
+            viewport={"width": 1920, "height": 1080},
+            locale="es-ES",
+            timezone_id="Europe/Madrid"
+        )
+        stealth_sync(self.page)
         self.page.goto(self.base_url)
         logger.info(f"Connected to page {self.base_url}")
     
     def lurk(self):
+        result = None
         for job in self.jobs:
             ty = job.get("type")
             for action in job.get("pre_actions", []):
@@ -43,9 +73,9 @@ class DynamicLurker(NetLurker):
     
     def close(self):
         logger.info("Stopping playwright browser.")
-        if self.browser:
+        if hasattr(self, "browser") and self.browser:
             self.browser.close()
-        if self.pw:
+        if hasattr(self, "pw") and self.pw:
             self.pw.stop()
     
 
@@ -198,6 +228,8 @@ class DynamicLurker(NetLurker):
                 self._filter(val, chk, sym, result)
         except Exception as e:
             logger.error(f"Could not actuate {act}, value {val}: {e}")
+
+
     
     def _filter(self, name, value, sym, result):
         func = OPERATORS.get(sym)
@@ -232,4 +264,17 @@ class DynamicLurker(NetLurker):
                 logger.warning(f"No column named {name}.")
                 return
             index = result[1].index(name.lower())
-            result[2][:] = [row for row in result[2] if func(row[index], value)]
+            clean_val = _typecast(value)
+            filter_row = []
+            for row in result[2]:
+                try:
+                    if index >= len(row):
+                        continue
+                    web_value = _typecast(row)
+                    if func(web_value, clean_val):
+                        filter_row.append(row)
+                except TypeError as e:
+                    logger.error(f"Incompatible types during filter evaluation"
+                                 f"cannot compare '{row[index]} with '{value}' using '{sym}'. Error: {e}")
+                    filter_row.append(row)
+            result[2][:] = filter_row
