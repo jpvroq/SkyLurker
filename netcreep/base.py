@@ -4,15 +4,21 @@ import xml.etree.ElementTree as ET
 import requests
 import urllib.robotparser
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-def _get_robots(url: str) -> Union[urllib.robotparser.RobotFileParser, None]:
+class RestrictedError(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+
+def _get_robots(url: str, user_agent: str = DEFAULT_USER_AGENT) -> Union[urllib.robotparser.RobotFileParser, None]:
     """
     Retrieves the robots.txt file.
     """
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": user_agent
     }
     url_base = url
     if not url_base: raise ValueError('No base URL.')
@@ -50,14 +56,13 @@ def _get_sitemaps(site: str) -> List[str]:
                 else:
                     sites.append(url)
     except Exception as e:
-        # TODO: logging
-        pass
+        logger.error(f"Unexpected error during sitemaps retrieval: {e}")
     return sites
 
 
 class NetLurker(ABC):
 
-    def __init__(self, config: Dict[str, str]):
+    def __init__(self, config: Dict[str, str], restrict_robots: bool=True):
         self.config = config
         # Key validation
         if "base_url" not in self.config:
@@ -66,6 +71,9 @@ class NetLurker(ABC):
         
         self.type = self.config.get("type")
         self.base_url = self.config.get("base_url")
+        self.user_agent = self.config.get("user_agent", DEFAULT_USER_AGENT)
+        self.restrict_robots = restrict_robots
+        
         self.rp = None
         self.sitemaps = []
         try:
@@ -82,7 +90,22 @@ class NetLurker(ABC):
         except Exception as e:
             logger.error("Could not parse robots.txt or sitemaps for {self.base_url}.")
     
+    def verify_and_wait(self, url: str):
+        """
+        Checks if route is permitted in robots.txt and applies Crawl-Delay if exists.
+        """
+        if self.rp:
+            if not self.rp.can_fetch(self.user_agent, url):
+                logger.warning(f"[OPSEC WARNING] Website prohibits robot access to: {url}")
+                if self.restrict_robots:
+                    raise RestrictedError(f"Access to {url} is prohibited by robots.txt.")
 
+            # 2. Verificar y aplicar el Crawl-Delay
+            delay = self.rp.crawl_delay(self.user_agent) or self.rp.crawl_delay("*")
+            if delay:
+                logger.info(f"Applying Crawl-Delay: {delay} seconds.")
+                time.sleep(delay)
+    
     @abstractmethod
     def connect(self):
         pass
