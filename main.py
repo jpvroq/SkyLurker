@@ -4,6 +4,15 @@ import logging
 import json
 import os
 
+logging.basicConfig(
+    level=logging.INFO,
+    # El secret està en afegir '%(name)s' dins del string del format:
+    format="[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    filename="skylurker.log",
+    filemode="w"
+)
+
 logger = logging.Logger(__name__)
 
 if __name__ == "__main__":
