@@ -1,8 +1,8 @@
 from .base import NetLurker, RestrictedError
 import logging, operator
 from typing import Dict, List, Tuple
-from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth
+from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 
 logger = logging.getLogger(__name__)
 
@@ -39,57 +39,63 @@ class DynamicLurker(NetLurker):
     def __init__(self, config: Dict[str, str]):
         super().__init__(config)
         self.jobs = config.get("jobs", [])
+        self.pw = None
+        self.browser = None
+        self.page = None
 
-    def connect(self):
+    async def connect(self):
+        logging.info(f"Connecting to {self.base_url}")
         self.can_lurk = True
         try:
-            self.verify_and_wait(self.base_url)
-            logger.info(f"Connecting to {self.base_url} via Playwright")
-            self.pw = sync_playwright().start()
-            self.browser = self.pw.chromium.launch(headless=True)
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            self.stealth_context = Stealth().use_async(async_playwright())
+            self.pw = await self.stealth_context.__aenter__()
+            self.browser = await self.pw.chromium.launch(headless=True)
 
-            self.page = self.browser.new_page(
+            self.page = await self.browser.new_page(
                 user_agent=self.user_agent,
                 viewport={"width": 1920, "height": 1080},
                 locale="es-ES",
                 timezone_id="Europe/Madrid"
             )
-            stealth(self.page)
-            self.page.goto(self.base_url)
+        
+            self.verify_and_wait(self.base_url)
+
+            await self.page.goto(self.base_url, wait_until="domcontentloaded")
             logger.info(f"Connected to page {self.base_url}")
         except RestrictedError as re:
             self.can_lurk = False
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
     
-    def lurk(self):
+    async def lurk(self):
         result = None
         if not self.can_lurk:
             return None
         for job in self.jobs:
             ty = job.get("type")
             for action in job.get("pre_actions", []):
-                self._actuate(action)
+                await self._actuate(action)
             if ty == "table":
-                result = self._table_lurker_hybrid(job)
+                result = await self._table_lurker_hybrid(job)
             elif ty == "item":
-                result = self._item_lurker(job)
+                result = await self._item_lurker(job)
             
             for action in job.get("post_actions", []):
-                self._actuate(action, result=result)
+                await self._actuate(action, result=result)
             if ty == "table" and result:
                 return [dict(zip(result[1], row)) for row in result[2]]
             if ty == "item" and result:
                 return result[2]
     
-    def close(self):
+    async def close(self):
         logger.info("Stopping playwright browser.")
         if hasattr(self, "browser") and self.browser:
-            self.browser.close()
-        if hasattr(self, "pw") and self.pw:
-            self.pw.stop()
+            await self.browser.close()
+        if hasattr(self, "stealth_context") and self.stealth_context:
+            await self.stealth_context.__aexit__(None, None, None)
     
 
-    def _item_lurker(self, job: Dict[str, str]):
+    async def _item_lurker(self, job: Dict[str, str]):
         """
         Gets a single text form the webpage.
         """
@@ -113,11 +119,11 @@ class DynamicLurker(NetLurker):
                 logger.warning(f"Fields must have a selector: {item_name}")
                 continue
             try:
-                self.page.wait_for_selector(selector, timeout=5000)
-                element = self.page.locator(selector).first
+                await self.page.wait_for_selector(selector, timeout=5000)
+                element = await self.page.locator(selector).first
 
-                if element.count() > 0:
-                    text = element.inner_text().strip()
+                if await element.count() > 0:
+                    text = (await element.inner_text()).strip()
                     type = field.get("type", None)
                     aux = None
                     if type:
@@ -134,154 +140,119 @@ class DynamicLurker(NetLurker):
                 logger.warning(f"Error extracting field '{field_name} using selector ¡{selector}: {e}")
             return {"item", item_name, data}
     
-    def _table_lurker(self, job: Dict[str, str]) -> Tuple[List[str], List[str]]:
+    async def _table_lurker_hybrid(self, job: Dict[str, str]) -> Tuple[List[str], List[str]]:
         table_id = job.get("name")
-        logging.info(f"Lurking in table {table_id}.")
-        self.page.wait_for_selector(f"#{table_id}")
+        logging.info(f"Lurking in table {table_id} (Hybrid Selector Asynchronous).")
+        await self.page.wait_for_selector(f"#{table_id}", timeout=5000)
 
-        # Try to extract header
-        headers, results = [], []
-        header_elements = self.page.query_selector_all(f"#{table_id} thead td, #{table_id} thead th")
-        if header_elements:
-            headers = [h.inner_text().strip() or h.get_attribute("id") or ""
-                       for h in header_elements]
+        selectors_js = f"#{table_id} thead td, #{table_id} thead th, #{table_id} [role='columnheader'], #{table_id} .grid-header-cell"
+        row_selectors = f"#{table_id} tbody tr, #{table_id} [role='row'], #{table_id} .grid-row"
         
-        # Extract rows
-        results = self.page.evaluate(f"""
-            () => {{
-                const rows = Array.from(document.querySelectorAll('#{table_id} tbody tr'));
-                const seen = new Set();
-                const uniqueResults = [];
-
-                rows.forEach(tr => {{
-                    const cells = Array.from(tr.querySelectorAll('td'));
-                    const rowData = cells.map(td => {{
-                        const img = td.querySelector('img');
-                        if (img) {{
-                            return img.getAttribute('title') || img.getAttribute('alt') || "";
-                        }}
-                        return td.innerText.trim();
-                    }});
-
-                    // Only process if its not null
-                    if (rowData.some(cell => cell !== "")) {{
-                        // Creem una "clau" única unint el contingut de les cel·les
-                        const rowKey = JSON.stringify(rowData);
-                        // Do not process duplicated rows
-                        if (!seen.has(rowKey)) {{
-                            seen.add(rowKey);
-                            uniqueResults.push(rowData);
-                        }}
-                    }}
-                }});
-
-                return uniqueResults;
-            }}
-        """)
-        return ["table", headers, results]
-    
-    def _table_lurker_hybrid(self, job: Dict[str, str]) -> Tuple[List[str], List[str]]:
-        table_id = job.get("name")
-        logging.info(f"Lurking in table {table_id} (Hybrid Selector).")
-        self.page.wait_for_selector(f"#{table_id}")
-
-        # 1. Headers híbrids: Suporta 'thead td/th' tra Grid/ARIA
-        headers = []
-        header_selectors = [
-            f"#{table_id} thead td", 
-            f"#{table_id} thead th", 
-            f"#{table_id} [role='columnheader']",
-            f"#{table_id} .grid-header-cell"
-        ]
-        header_elements = self.page.query_selector_all(", ".join(header_selectors))
-    
-        if header_elements:
-            headers = [h.inner_text().strip().lower() or h.get_attribute("id").lower() or ""
-                        for h in header_elements]
-    
-        # 2. Files i cel·les híbrides amb JavaScript
-        results = self.page.evaluate(f"""
-            () => {{
-                // Search row both in html tr and CSS Grid roles
-                const rowSelectors = '#{table_id} tbody tr, #{table_id} [role="row"], #{table_id} .grid-row';
-                const rows = Array.from(document.querySelectorAll(rowSelectors));
-                const seen = new Set();
-                const uniqueResults = [];
-
-                rows.forEach(tr => {{
-                    // If header, continue
-                    if (tr.tagName === 'THEAD' || tr.querySelector('th') || tr.querySelector('[role="columnheader"]') || tr.classList.contains('grid-header')) {{
-                        return;
-                    }}
-
-                    // Search cells
-                    const cellSelectors = 'td, [role="cell"], [role="gridcell"], .grid-cell';
-                    const cells = Array.from(tr.querySelectorAll(cellSelectors));
+        data = await self.page.evaluate("""
+            function(args) {
+                var selJs = args[0];
+                var rowSel = args[1];
                 
-                    const rowData = cells.map(td => {{
-                        const img = td.querySelector('img');
-                        if (img) {{
+                var headerElements = Array.from(document.querySelectorAll(selJs));
+                var headers = headerElements.map(function(h) {
+                    return (h.innerText.trim() || h.getAttribute("id") || "").toLowerCase();
+                });
+
+                var rows = Array.from(document.querySelectorAll(rowSel));
+                var seen = new Set();
+                var uniqueResults = [];
+
+                rows.forEach(function(tr) {
+                    if (tr.tagName === 'THEAD' || tr.querySelector('th') || tr.querySelector('[role="columnheader"]') || tr.classList.contains('grid-header')) {
+                        return;
+                    }
+
+                    var cellSelectors = 'td, [role="cell"], [role="gridcell"], .grid-cell';
+                    var cells = Array.from(tr.querySelectorAll(cellSelectors));
+                
+                    var rowData = cells.map(function(td) {
+                        var img = td.querySelector('img');
+                        if (img) {
                             return img.getAttribute('title') || img.getAttribute('alt') || "";
-                        }}
+                        }
                         return td.innerText.trim();
-                    }});
+                    });
 
-                    // Check empty and duplicated
-                    //if (rowData.some(cell => cell !== "")) {{
-                        const rowKey = JSON.stringify(rowData);
-                        if (!seen.has(rowKey)) {{
-                            seen.add(rowKey);
-                            uniqueResults.push(rowData);
-                        }}
-                    //}}
-                }});
+                    var rowKey = JSON.stringify(rowData);
+                    if (!seen.has(rowKey)) {
+                        seen.add(rowKey);
+                        uniqueResults.push(rowData);
+                    }
+                });
 
-                return uniqueResults;
-            }}
-        """)
-        return ["table", headers, results]
+                return { headers: headers, results: uniqueResults };
+            }
+        """, [selectors_js, row_selectors])
+        
+        return ["table", data["headers"], data["results"]]
     
-    def _actuate(self, action: Dict[str, Any], result: List[Any]=None):
+    async def _actuate(self, action: Dict[str, Any], result: List[Any]=None):
         act = action.get("action")
         val = action.get("value")
         chk = action.get("check")
         sym = action.get("sym", "")
         try:
-            if act == "click":
-                logger.info(f"Click on {val}.")
-                self.page.wait_for_selector(val)
-                if not chk:
-                    chk = 1
-                else:
-                    chk = int(chk)
-                for i in range(chk):
-                    self.page.click(val)
-            if act == "click_if_not_checked":
-                logger.info(f"Click if not checked on {val}.")
-                is_checked = self.page.locator(f"{val}.{chk}").count() > 0
-                if not is_checked:
-                    logger.info(f"Activating toggle: {val}.")
-                    self.page.click(val)
-                    is_checked = self.page.locator(f"{val}.{chk}").count() > 0
+            if act in ["click", "click_if_not_checked"]:
+                await self._click(act, val, chk)
             elif act == "wait":
                 logger.info(f"Waiting {val} ms.")
-                self.page.wait_for_timeout(val)
+                await self.page.wait_for_timeout(val)
             elif act == "mouse_wheel":
                 logger.info(f"Scrolling on {val}.")
-                box = self.page.locator(val).bounding_box()
+                box = await self.page.locator(val).bounding_box()
                 if box:
                     # Move mouse
-                    self.page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                    await self.page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
                     # Scrolling
                     chk = float(chk)
-                    self.page.mouse.wheel(0, chk)
+                    await self.page.mouse.wheel(0, chk)
             elif act == "filter":
                 logger.info(f"Filtering with {val} {sym} {chk}.")
                 self._filter(val, chk, sym, result)
         except Exception as e:
             logger.error(f"Could not actuate {act}, value {val}: {e}")
 
-
+    async def _click(self, act: str, val, chk):
+        try:
+            logger.info(f"Targeting action [{act}] on selector: {val}")
+                
+            await self.page.wait_for_selector(val, timeout=2500, state="attached")
+                    
+            locator = self.page.locator(val).first
+            
+            should_click = True
+            
+            if act == "click_if_not_checked":
+                classes = ""
+                if await locator.count() > 0:
+                    classes = await locator.get_attribute("class") or ""
+                
+                if str(chk) in classes.split():
+                    should_click = False
+                    logger.info(f"Toggle is already active. Skipping execution.")
+            
+            if should_click:
+                vegades = int(chk) if (act == "click" and chk) else 1
+                for _ in range(vegades):
+                    try:
+                        await locator.click(force=True, timeout=1500)
+                        logger.info(f"Successful click dispatch on {val}.")
+                    except Exception as e_click:
+                        logger.warning(f"Standard click failed. Dispatching native browser click event: {e_click}")
+                        await locator.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}))")
+            
+            if act == "click_if_not_checked" and should_click:
+                await self.page.wait_for_timeout(300)
+                classes_post = await locator.get_attribute("class") or ""
+                logger.info(f"Toggle verified. Status: {str(chk) in classes_post.split()}")
+                
+        except Exception as e:
+            logger.warning(f"Could not complete action [{act}] on {val}. Web might be laggy or selector changed. Moving forward... Error: {e}")
     
     def _filter(self, name, value, sym, result):
         func = OPERATORS.get(sym)
@@ -315,6 +286,7 @@ class DynamicLurker(NetLurker):
             if name.lower() not in result[1]:
                 logger.warning(f"No column named {name}.")
                 return
+            logger.info(f"Filtering {len(result[2])} rows with column {name} and value {value}.")
             index = result[1].index(name.lower())
             clean_val = _typecast(value)
             filter_row = []
@@ -322,7 +294,7 @@ class DynamicLurker(NetLurker):
                 try:
                     if index >= len(row):
                         continue
-                    web_value = _typecast(row)
+                    web_value = _typecast(row[index])
                     if func(web_value, clean_val):
                         filter_row.append(row)
                 except TypeError as e:
