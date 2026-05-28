@@ -2,7 +2,8 @@ import os
 import json
 import logging
 from typing import Dict, Any, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
+from pathlib import Path
 
 from netcreep import LurkerFactory
 
@@ -19,13 +20,16 @@ console.setLevel(logging.INFO)
 console.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s"))
 logging.getLogger("").addHandler(console)
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
-def _execute_single_job(job_config: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute_single_job(job_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Function to be executen in each thread.
     """
     result = None
+    lurker = None
     report = {
             "target": job_config.get("base_url", "ERROR"),
             "type": job_config.get("type", "ERROR"),
@@ -34,23 +38,23 @@ def _execute_single_job(job_config: Dict[str, Any]) -> Dict[str, Any]:
         }
     try:
         logger.info("Creating lurker.")
-        lurker = LurkerFactory(job_config)
+        lurker = LurkerFactory.create(job_config)
         logger.info(f"Created {lurker.type} lurker for {lurker.base_url}.")
         
 
-        lurker.connect()
-        result = lurker.lurk()
-        lurker.close()
+        await lurker.connect()
+        result = await lurker.lurk()
+        await lurker.close()
 
         report["data"] = result
 
     except Exception as e:
-        logger.error(f"Critical error with concurrent job {report['base_url']}, type {report['type']}."
+        logger.error(f"Critical error with concurrent job {report['target']}, type {report['type']}."
                      f"ERROR: {e}")
         report["status"] = "FAILED"
         if lurker and hasattr(lurker, "close"):
             try:
-                lurker.close()
+                await lurker.close()
             except:
                 pass
     return report
@@ -59,13 +63,17 @@ def _save_results(results: List[Dict[str, Any]], filename: str = "default_name.j
     """
     Saves result based on configuration.
     """
-    raise NotImplemented("Function not implemented.")
+    output_path = os.path.join(os.getcwd(), filename)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=4)
+    logger.info(f"Results saved on: {output_path}")
 
-def orchestrator():
+async def main_async(save_file: str=None):
     logger.info("=== Initializing SkyLurker Concurrent Orchestrator ===")
     path = Path("./configs")
     logger.info(f"Job path: {path}")
     configs = []
+    compiled_results = []
     for file in path.glob("*.json"):
         if file.name.startswith("exclude_"):
             logger.info(f"Excluding file {file.name}")
@@ -76,21 +84,20 @@ def orchestrator():
                 configs.append(json.load(f))
         except json.JSONDecodeError as e:
             logger.error(f"Cannot decode JSON file {file.name}. {e}")
-    logger.info(f"Loaded {len(configs)} jobs. Initializing Threads...")
+    logger.info(f"Loaded {len(configs)} jobs. Initializing asynchronous threads...")
 
-    compiled_results = []
+    jobs = [_execute_single_job(job) for job in configs]
+    compiled_results = await asyncio.gather(*jobs)
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures_map = {executor.submit(_execute_single_job, job): job for job in configs}
-        
-        for future in as_completed(futures_map):
-            job_result = futures_map[future]
-            try:
-                result = future.result()
-                compiled_results.append(result)
-                logger.info(f"Job completed for {result['target']}. Status: {result['status']}.")
-            except Exception as e:
-                logger.error(f"Thread for job {job_result.get('base_url')} has encountered an error."
-                             f"ERROR: {e}")
     logger.info("=== Concurrent Orchestrator finalized ===")
-    return compiled_results
+    
+    if save_file:
+        _save_results(compiled_results, save_file)
+    else:
+        return compiled_results
+
+if __name__ == "__main__":
+    results = None
+    results = asyncio.run(main_async("result.json"))
+    if results:
+        print(results)
