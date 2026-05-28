@@ -107,15 +107,15 @@ class NetLurker(ABC):
                 time.sleep(delay)
     
     @abstractmethod
-    def connect(self):
+    async def connect(self):
         pass
 
     @abstractmethod
-    def lurk(self):
+    async def lurk(self):
         pass
 
     @abstractmethod
-    def close(self):
+    async def close(self):
         pass
 
 class TestLurker(NetLurker):
